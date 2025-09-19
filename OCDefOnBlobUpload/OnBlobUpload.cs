@@ -15,10 +15,15 @@ public class OnBlobUpload
     }
 
     [Function(nameof(OnBlobUpload))]
-    public async Task Run([BlobTrigger("pdfs/{name}", Source = BlobTriggerSource.EventGrid)] Stream stream, string name)
+    [BlobOutput("test-samples-output/{name}-output.txt")]
+    public static string Run(
+        [BlobTrigger("pdf/{name}")] string myTriggerItem,
+        FunctionContext context)
     {
-        using var blobStreamReader = new StreamReader(stream);
-        var content = await blobStreamReader.ReadToEndAsync();
-        _logger.LogInformation("C# Blob Trigger (using Event Grid) processed blob\n Name: {name} \n Data: {content}", name, content);
+        var logger = context.GetLogger("OnBlobUpload");
+        logger.LogInformation("Triggered Item = {myTriggerItem}", myTriggerItem);
+
+        // Blob Output
+        return "blob-output content";
     }
 }
