@@ -5,16 +5,16 @@ using Microsoft.Extensions.Logging;
 
 namespace OCDefOnBlobUpload;
 
-public class Function1
+public class OnBlobUpload
 {
-    private readonly ILogger<Function1> _logger;
+    private readonly ILogger<OnBlobUpload> _logger;
 
-    public Function1(ILogger<Function1> logger)
+    public OnBlobUpload(ILogger<OnBlobUpload> logger)
     {
         _logger = logger;
     }
 
-    [Function(nameof(Function1))]
+    [Function(nameof(OnBlobUpload))]
     public async Task Run([BlobTrigger("pdfs/{name}", Source = BlobTriggerSource.EventGrid, Connection = "BLOB_CONNECTION_STRING")] Stream stream, string name)
     {
         using var blobStreamReader = new StreamReader(stream);
