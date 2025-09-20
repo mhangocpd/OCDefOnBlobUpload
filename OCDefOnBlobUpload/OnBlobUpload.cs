@@ -15,7 +15,7 @@ public class OnBlobUpload
     }
 
     [Function(nameof(OnBlobUpload))]
-    public async Task Run([BlobTrigger("pdfs/{name}", Source = BlobTriggerSource.EventGrid, Connection = "ConnectionValue")] Stream stream, string name)
+    public async Task Run([BlobTrigger("pdfs/{name}", Connection = "BlobStorage")] Stream stream, string name)
     {
         using var blobStreamReader = new StreamReader(stream);
         var content = await blobStreamReader.ReadToEndAsync();
