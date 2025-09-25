@@ -79,8 +79,19 @@ public class SubmitChat
             new UserChatMessage(userPrompt)
         };
 
-        ClientResult<ChatCompletion> chatResult = await client.GetChatClient("gpt-4o").CompleteChatAsync(messages);
-        string answer = chatResult.Value.Content.FirstOrDefault()?.Text ?? "I'm sorry, I couldn't find an answer to your question.";
+        string answer;
+        try
+        {
+            ClientResult<ChatCompletion> chatResult = await client.GetChatClient("gpt-4o").CompleteChatAsync(messages);
+            answer = chatResult.Value.Content.FirstOrDefault()?.Text ?? "I'm sorry, I couldn't find an answer to your question.";
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogError($"OpenAI request failed: {ex.Message}");
+            var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+            await errorResponse.WriteStringAsync("Error communicating with OpenAI service.");
+            return errorResponse;
+        }
         _logger.LogInformation("Completed and returned response.");
 
         // Return the answer to the frontend
