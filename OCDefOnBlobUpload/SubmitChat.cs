@@ -36,9 +36,11 @@ public class SubmitChat
     public async Task<HttpResponseData> Run(
         [HttpTrigger(AuthorizationLevel.Function, "get", "post")] HttpRequestData req)
     {
-        _logger.LogInformation("Getting embeddings user query...");
+        _logger.LogInformation("Sending user query to AI Search...");
         string userQuery = await new StreamReader(req.Body).ReadToEndAsync();
         var client = new AzureOpenAIClient(new Uri(openAiEndpoint), new AzureKeyCredential(openAiKey));
+        // Send embeddings to AI search
+        /**
         var embedding = await client.GetEmbeddingClient("text-embedding-3-large").GenerateEmbeddingAsync(userQuery);
         ReadOnlyMemory<float> vector = embedding.Value.ToFloats();
         var vectorQuery = new VectorizedQuery(vector)
@@ -46,8 +48,6 @@ public class SubmitChat
             Fields = { "text_vector" }
         };
 
-        // Send embeddings to AI search
-        /**
         _logger.LogInformation("Successfully retrieved embeddings, searching with Azure AI Search...");
         var searchOptions = new SearchOptions
         {
@@ -90,6 +90,13 @@ public class SubmitChat
             _logger.LogError($"OpenAI request failed: {ex.Message}");
             var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
             await errorResponse.WriteStringAsync("Error communicating with OpenAI service.");
+            return errorResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Unexpected error: {ex.Message}");
+            var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+            await errorResponse.WriteStringAsync("An unexpected error occurred.");
             return errorResponse;
         }
         _logger.LogInformation("Completed and returned response.");
