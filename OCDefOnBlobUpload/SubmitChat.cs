@@ -1,4 +1,4 @@
-using Azure;
+﻿using Azure;
 using Azure.AI.OpenAI;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
@@ -22,6 +22,7 @@ public class SubmitChat
     private readonly string searchEndpoint = Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")!;
     private readonly string searchIndex = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX")!;
     private readonly string searchKey = Environment.GetEnvironmentVariable("AZURE_SEARCH_KEY")!;
+    private const string systemPrompt = "You are the “W&A Assistant”. You are NOT a lawyer and must never draft legal documents or create legal arguments.\r\n \r\nSCOPE\r\n- Only: (a) summarize provided transcripts and case files; (b) answer questions using those same files; (c) extract entities, dates, events, and citations to the exact passages.\r\n- Never: generate original legal content, draft appeals/motions/briefs/letters/emails, write recommendations, or speculate about law or case strategy.\r\n \r\nGROUNDING\r\n- Answer ONLY with information grounded in the retrieved documents. For every non-trivial answer, include inline citations [DocName, page/section] to the specific passages you used.\r\n- If the answer cannot be found in the provided materials, reply:\r\n  “I can’t find that in the case materials. Please upload a source or point me to the relevant document.”\r\n \r\nSTYLE & NAMING\r\n- Refer to yourself only as “Assistant”. Do not use the words AI, Copilot, Agent, or model.\r\n- Be neutral, concise, and factual; no creative rewriting or embellishment.\r\n \r\nSAFETY\r\n- If asked to create, rewrite, or improve any legal content (appeals, motions, briefs, letters, emails), respond with the refusal template.\r\n- If asked for legal interpretation or advice beyond the documents, refuse and suggest consulting counsel.\r\n- Follow content safety: do not output hateful, sexual, self-harm content; handle violent content factually and neutrally when it appears in source materials.\r\n \r\nREFUSAL TEMPLATE\r\n“I can’t do that. I’m limited to summarizing and answering questions directly from the uploaded case materials. I can help you find the relevant passages or produce a factual summary with citations.”\r\n \r\nOUTPUT LIMITS\r\n- Temperature ≤ 0.2; max 512 output tokens unless summarizing multi-document bundles.\r\n- No links to the open web; no tools other than court‑approved indexes.";
 
 
     public SubmitChat(ILogger<SubmitChat> logger)
@@ -63,32 +64,24 @@ public class SubmitChat
 
         // Put relevant chunks together and send to OpenAI chat
         _logger.LogInformation("Successfully searched and found relevant chunks, plugging context into OpenAI chat...");
-        var systemPrompt = "You are a law proceedings assistant that pores over court proceeding documents to answer law-related queries and search for potential appeals.";
         var userPrompt = $"Question: {userQuery}";
 
         // Return the answer to the frontend
         var messages = new ChatMessage[]
         {
-            new SystemChatMessage(systemPrompt)
+            new SystemChatMessage(systemPrompt),
+            new UserChatMessage(userPrompt)
         };
         foreach (var relevantChunk in relevantChunks)
         {
-            messages = messages.Append(new SystemChatMessage($"Context: {relevantChunk}")).ToArray();
+            messages = messages.Append(new AssistantChatMessage($"Context: {relevantChunk}")).ToArray();
         }
 
         string answer;
         try
         {
             ChatClient chatClient = client.GetChatClient("gpt-4o");
-            var i = 1;
-            foreach (var msg in messages)
-            {
-                _logger.LogInformation($"Adding context chunk {i}...");
-                await chatClient.CompleteChatAsync(msg);
-                await Task.Delay(5000); // To avoid rate limiting
-                i++;
-            }
-            ClientResult<ChatCompletion> chatResult = chatClient.CompleteChatAsync(new UserChatMessage(userPrompt)).Result;
+            ClientResult<ChatCompletion> chatResult = chatClient.CompleteChatAsync(messages).Result;
             answer = chatResult.Value.Content.FirstOrDefault()?.Text ?? "I'm sorry, I couldn't find an answer to your question.";
         }
         catch (RequestFailedException ex)
