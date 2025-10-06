@@ -69,6 +69,17 @@ public class UploadPDF
             }
         }
 
+        // Extract case number from form data
+        var caseNumberParam = parser.Parameters.FirstOrDefault(p => p.Name.Equals("caseNumber", StringComparison.OrdinalIgnoreCase));
+        if (caseNumberParam == null || string.IsNullOrWhiteSpace(caseNumberParam.Data))
+        {
+            var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+            await badResponse.WriteStringAsync("Case number is required.");
+            return badResponse;
+        }
+        string caseNumber = caseNumberParam.Data;
+        _logger.LogInformation($"Processing upload for case number: {caseNumber}");
+
         BlobContainerClient container = new BlobContainerClient(pdfUri, cred);
         DocumentIntelligenceClient docintel = new DocumentIntelligenceClient(
             new Uri("https://ocdef-docintelpro.cognitiveservices.azure.com/"),
@@ -85,6 +96,11 @@ public class UploadPDF
             await file.Data.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
             await blob.UploadAsync(memoryStream, overwrite: true);
+            var tags = new Dictionary<string, string>
+            {
+                { "CaseNumber", caseNumber }
+            };
+            await blob.SetTagsAsync(tags);
             _logger.LogInformation("Upload complete.");
         }
 
