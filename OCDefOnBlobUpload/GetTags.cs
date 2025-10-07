@@ -20,19 +20,9 @@ using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace OCDefOnBlobUpload;
 
-// NOTE: Although search embedding can be done here, Azure AI search does this automatically.
-// Without that enabled all this function does is connect to gpt-4o and feed the results of the vector search into it.
 public class GetTags
 {
     private readonly ILogger<GetTags> _logger;
-
-    private readonly string openAiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY")!;
-    private readonly string openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!;
-    private readonly string accountName = Environment.GetEnvironmentVariable("STORAGE_ACCOUNT_NAME")!;
-    private readonly string searchEndpoint = Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")!;
-    private readonly string searchIndex = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX")!;
-    private readonly string searchKey = Environment.GetEnvironmentVariable("AZURE_SEARCH_KEY")!;
-
 
     public GetTags(ILogger<GetTags> logger)
     {
@@ -41,67 +31,146 @@ public class GetTags
 
     [Microsoft.Azure.Functions.Worker.Function(nameof(GetTags))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", "post")] HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req)
     {
-        // Read blob URI from request body
-        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-        var data = System.Text.Json.JsonSerializer.Deserialize<JsonElement>(requestBody);
-
-        if (!data.TryGetProperty("blobUri", out var blobUriElement))
-        {
-            var errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-            await errorResponse.WriteStringAsync("Please provide blobUri in the request body.");
-            return errorResponse;
-        }
-
-        string blobUri = blobUriElement.GetString()!;
-        // var cred = new DefaultAzureCredential();
         var cred = new ManagedIdentityCredential(clientId: "20238ad9-abb5-4ca6-a9ad-c468b21d0b3d");
 
-        if (string.IsNullOrEmpty(blobUri))
-        {
-            var errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-            await errorResponse.WriteStringAsync("Please provide blobUri in the request body.");
-            return errorResponse;
-        }
-
-        // Parse blob URI
-        var blobClient = new BlobClient(new Uri(blobUri), cred);
-
-        // Get tags
-        IDictionary<string, string> tags;
         try
         {
-            var resp = await blobClient.GetTagsAsync();
-            tags = resp.Value.Tags;
-            _logger.LogInformation($"Successfully retrieved {tags.Count} tags from blob");
+            // Read the Azure AI Search skill request
+            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            var skillRequest = JsonSerializer.Deserialize<SkillRequest>(requestBody, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (skillRequest?.Values == null || !skillRequest.Values.Any())
+            {
+                var errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                await errorResponse.WriteStringAsync("No values provided in skill request.");
+                return errorResponse;
+            }
+
+            var responseRecords = new List<SkillResponseRecord>();
+
+            // Process each record in the batch
+            foreach (var record in skillRequest.Values)
+            {
+                try
+                {
+                    var responseRecord = new SkillResponseRecord
+                    {
+                        RecordId = record.RecordId,
+                        Data = new Dictionary<string, object>()
+                    };
+
+                    // Extract the blob URI from the record data
+                    if (record.Data.TryGetValue("metadata_storage_path", out var storagePathObj) && 
+                        storagePathObj is JsonElement storagePathElement)
+                    {
+                        string blobUri = storagePathElement.GetString()!;
+                        
+                        // Get blob tags
+                        var blobClient = new BlobClient(new Uri(blobUri), cred);
+                        var tagsResponse = await blobClient.GetTagsAsync();
+                        var tags = tagsResponse.Value.Tags;
+
+                        // Add tags to the response data
+                        responseRecord.Data["tags"] = tags;
+                        responseRecord.Data["tagCount"] = tags.Count;
+
+                        // Add individual tag values as separate fields (optional)
+                        foreach (var tag in tags)
+                        {
+                            responseRecord.Data[$"tag_{tag.Key}"] = tag.Value;
+                        }
+
+                        _logger.LogInformation($"Successfully retrieved {tags.Count} tags for record {record.RecordId}");
+                    }
+                    else
+                    {
+                        responseRecord.Errors = new List<SkillError>
+                        {
+                            new SkillError { Message = "metadata_storage_path not found in record data" }
+                        };
+                    }
+
+                    responseRecords.Add(responseRecord);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"Error processing record {record.RecordId}: {ex.Message}");
+                    responseRecords.Add(new SkillResponseRecord
+                    {
+                        RecordId = record.RecordId,
+                        Data = new Dictionary<string, object>(),
+                        Errors = new List<SkillError>
+                        {
+                            new SkillError { Message = $"Error retrieving tags: {ex.Message}" }
+                        }
+                    });
+                }
+            }
+
+            // Create the skill response
+            var skillResponse = new SkillResponse
+            {
+                Values = responseRecords
+            };
+
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            response.Headers.Add("Content-Type", "application/json");
+
+            var jsonResponse = JsonSerializer.Serialize(skillResponse, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true
+            });
+
+            await response.WriteStringAsync(jsonResponse);
+            return response;
         }
-        catch (System.Exception ex)
+        catch (Exception ex)
         {
-            _logger.LogError($"Error fetching tags: {ex.Message}");
+            _logger.LogError($"Unexpected error in GetTags skill: {ex.Message}");
             var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
-            await errorResponse.WriteStringAsync($"Error fetching tags: {ex.Message}");
+            await errorResponse.WriteStringAsync($"Internal server error: {ex.Message}");
             return errorResponse;
         }
-
-        // Build response object
-        var responseData = new Dictionary<string, object>
-        {
-            ["blobUri"] = blobUri,
-            ["tags"] = tags,
-            ["tagCount"] = tags.Count
-        };
-
-        // Return the tags as JSON
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        response.Headers.Add("Content-Type", "application/json");
-
-        var jsonResponse = JsonSerializer.Serialize(responseData, new JsonSerializerOptions
-        {
-            WriteIndented = true
-        });
-
-        await response.WriteStringAsync(jsonResponse);
-        return response;
     }
+}
+
+// Data models for Azure AI Search custom skills
+public class SkillRequest
+{
+    public List<SkillRequestRecord> Values { get; set; } = new();
+}
+
+public class SkillRequestRecord
+{
+    public string RecordId { get; set; } = string.Empty;
+    public Dictionary<string, object> Data { get; set; } = new();
+}
+
+public class SkillResponse
+{
+    public List<SkillResponseRecord> Values { get; set; } = new();
+}
+
+public class SkillResponseRecord
+{
+    public string RecordId { get; set; } = string.Empty;
+    public Dictionary<string, object> Data { get; set; } = new();
+    public List<SkillError>? Errors { get; set; }
+    public List<SkillWarning>? Warnings { get; set; }
+}
+
+public class SkillError
+{
+    public string Message { get; set; } = string.Empty;
+}
+
+public class SkillWarning
+{
+    public string Message { get; set; } = string.Empty;
 }
