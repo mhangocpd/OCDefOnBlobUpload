@@ -81,17 +81,16 @@ public class UploadPDF
         _logger.LogInformation($"Processing upload for case number: {caseNumber}");
 
         BlobContainerClient container = new BlobContainerClient(pdfUri, cred);
-        DocumentIntelligenceClient docintel = new DocumentIntelligenceClient(
-            new Uri("https://ocdef-docintelpro.cognitiveservices.azure.com/"),
-            cred);
-        _logger.LogInformation("Successfully connected to blob container " + container.AccountName + "/" + container.Name +
-            " and document intelligence");
+        _logger.LogInformation("Successfully connected to blob container " + container.AccountName + "/" + container.Name);
         foreach (var file in parser.Files)
         {
             // Upload the file to blob storage
-            var fileName = file.FileName ?? "uploaded_file.pdf";
+            var originalFileName = file.FileName ?? "uploaded_file.pdf";
+            var fileExtension = Path.GetExtension(originalFileName);
+            var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(originalFileName);
+            var fileName = $"{fileNameWithoutExtension}_CN{caseNumber}{fileExtension}";
             BlobClient blob = container.GetBlobClient(fileName);
-            _logger.LogInformation("Uploading {fileName} for archiving...", fileName);
+            _logger.LogInformation($"Uploading {fileName} for archiving...");
             using var memoryStream = new MemoryStream();
             await file.Data.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
