@@ -6,6 +6,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Text.Json;
+using System.Web;
 
 namespace OCDefOnBlobUpload;
 
@@ -23,37 +24,33 @@ public class ListFiles
 
     [Microsoft.Azure.Functions.Worker.Function(nameof(ListFiles))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequestData req)
     {
         try
         {
-            // Read the JSON request body
-            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var listRequest = JsonSerializer.Deserialize<ListFilesRequest>(requestBody, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            // Extract CaseNumber from query parameters
+            var query = HttpUtility.ParseQueryString(req.Url.Query);
+            string? caseNumber = query["aseNumber"];
 
-            if (listRequest == null || string.IsNullOrWhiteSpace(listRequest.CaseNumber))
+            if (string.IsNullOrWhiteSpace(caseNumber))
             {
                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badResponse.WriteStringAsync("CaseNumber is required in the request body.");
+                await badResponse.WriteStringAsync("CaseNumber query parameter is required. Example: ?caseNumber=ABC");
                 return badResponse;
             }
 
-            _logger.LogInformation($"Listing files for case number: {listRequest.CaseNumber}");
+            _logger.LogInformation($"Listing files for case number: {caseNumber}");
 
             // Set up authentication
             TokenCredential cred = managedIdentity != null 
                 ? new ManagedIdentityCredential(clientId: managedIdentity) 
                 : new VisualStudioCredential();
 
-            // Connect to blob servicehttps://ocdefstorage.blob.core.windows.net/pdfs/deposition_CNABC.pdf
+            // Connect to blob service
             var serviceUri = new Uri($"https://{accountName}.blob.core.windows.net");
             var blobServiceClient = new BlobServiceClient(serviceUri, cred);
             var matchingFiles = new List<string>();
-            string tagFilter = $"CaseNumber";
-            // string tagFilter = $"CaseNumber = '{listRequest.CaseNumber}'";
+            string tagFilter = $"CaseNumber = '{caseNumber}'";
             
             await foreach (var taggedBlobItem in blobServiceClient.FindBlobsByTagsAsync(tagFilter))
             {
@@ -67,12 +64,12 @@ public class ListFiles
                 }
             }
 
-            _logger.LogInformation($"Found {matchingFiles.Count} files for case number {listRequest.CaseNumber}");
+            _logger.LogInformation($"Found {matchingFiles.Count} files for case number {caseNumber}");
 
             // Create response
             var responseData = new ListFilesResponse
             {
-                CaseNumber = listRequest.CaseNumber,
+                CaseNumber = caseNumber,
                 FileCount = matchingFiles.Count,
                 FileNames = matchingFiles
             };
@@ -99,13 +96,7 @@ public class ListFiles
     }
 }
 
-// Request model
-public class ListFilesRequest
-{
-    public required string CaseNumber { get; set; }
-}
-
-// Response model
+// Response model (Request model no longer needed)
 public class ListFilesResponse
 {
     public required string CaseNumber { get; set; }
