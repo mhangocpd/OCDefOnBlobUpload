@@ -131,7 +131,7 @@ public class SubmitChat
         {
             Size = 5,
             Select = { "chunk" },
-            Filter = chatRequest.CaseNumber
+            Filter = $"CaseNumber eq '{chatRequest.CaseNumber}'"
         };
         var searchClient = new SearchClient(new Uri(searchEndpoint), searchIndex, new AzureKeyCredential(searchKey));
         var searchResults = await searchClient.SearchAsync<SearchDocument>(chatRequest.Message, searchOptions);
