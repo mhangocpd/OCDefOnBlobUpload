@@ -52,18 +52,10 @@ public class ListFiles
             var matchingFiles = new List<string>();
             string tagFilter = $"CaseNumber = '{caseNumber}'";
 
-            _logger.LogInformation("Test 1");
             await foreach (var taggedBlobItem in blobServiceClient.FindBlobsByTagsAsync(tagFilter))
             {
-                // Extract container name and blob name from the blob name
-                // taggedBlobItem.BlobName format: "container/blobname"
-                _logger.LogInformation($"Found matching file 1: {taggedBlobItem.BlobName}");
-                var blobParts = taggedBlobItem.BlobName.Split('/', 2);
-                if (blobParts.Length == 2 && blobParts[0] == filesContainer)
-                {
-                    matchingFiles.Add(blobParts[1]);
-                    _logger.LogInformation($"Found matching file: {blobParts[1]}");
-                }
+                matchingFiles.Add(taggedBlobItem.BlobName);
+                _logger.LogInformation($"Found matching file: {taggedBlobItem.BlobName}");
             }
 
             _logger.LogInformation($"Found {matchingFiles.Count} files for case number {caseNumber}");
