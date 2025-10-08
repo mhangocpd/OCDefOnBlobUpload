@@ -48,11 +48,12 @@ public class ListFiles
                 ? new ManagedIdentityCredential(clientId: managedIdentity) 
                 : new VisualStudioCredential();
 
-            // Connect to blob service
+            // Connect to blob servicehttps://ocdefstorage.blob.core.windows.net/pdfs/deposition_CNABC.pdf
             var serviceUri = new Uri($"https://{accountName}.blob.core.windows.net");
             var blobServiceClient = new BlobServiceClient(serviceUri, cred);
             var matchingFiles = new List<string>();
-            string tagFilter = $"CaseNumber = '{listRequest.CaseNumber}'";
+            string tagFilter = $"CaseNumber";
+            // string tagFilter = $"CaseNumber = '{listRequest.CaseNumber}'";
             
             await foreach (var taggedBlobItem in blobServiceClient.FindBlobsByTagsAsync(tagFilter))
             {
