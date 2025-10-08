@@ -30,7 +30,7 @@ public class ListFiles
         {
             // Extract CaseNumber from query parameters
             var query = HttpUtility.ParseQueryString(req.Url.Query);
-            string? caseNumber = query["aseNumber"];
+            string? caseNumber = query["CaseNumber"];
 
             if (string.IsNullOrWhiteSpace(caseNumber))
             {
