@@ -51,11 +51,13 @@ public class ListFiles
             var blobServiceClient = new BlobServiceClient(serviceUri, cred);
             var matchingFiles = new List<string>();
             string tagFilter = $"CaseNumber = '{caseNumber}'";
-            
+
+            _logger.LogInformation("Test 1");
             await foreach (var taggedBlobItem in blobServiceClient.FindBlobsByTagsAsync(tagFilter))
             {
                 // Extract container name and blob name from the blob name
                 // taggedBlobItem.BlobName format: "container/blobname"
+                _logger.LogInformation($"Found matching file 1: {taggedBlobItem.BlobName}");
                 var blobParts = taggedBlobItem.BlobName.Split('/', 2);
                 if (blobParts.Length == 2 && blobParts[0] == filesContainer)
                 {
