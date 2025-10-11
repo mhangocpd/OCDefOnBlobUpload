@@ -10,14 +10,12 @@ using System.Text.Json;
 using System.Web;
 using IndexerExecutionResult = Azure.Search.Documents.Indexes.Models.IndexerExecutionResult;
 using IndexerExecutionStatus = Azure.Search.Documents.Indexes.Models.IndexerExecutionStatus;
-using IndexerStatus = Azure.Search.Documents.Indexes.Models.IndexerStatus;
 
 namespace OCDefOnBlobUpload;
 
 public class PollIndexer
 {
     private readonly ILogger<PollIndexer> _logger;
-    private readonly string? managedIdentity = Environment.GetEnvironmentVariable("MANAGED_IDENTITY_CLIENT_ID");
     private readonly string searchEndpoint = Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")!;
     private readonly string adminSearchKey = Environment.GetEnvironmentVariable("AZURE_SEARCH_ADMIN_KEY")!;
     private readonly string blobIndexerName = Environment.GetEnvironmentVariable("AZURE_BLOB_INDEXER_NAME")!;
@@ -51,14 +49,13 @@ public class PollIndexer
                 new Uri(searchEndpoint), 
                 new AzureKeyCredential(adminSearchKey));
 
-            // Poll indexer status
+            // Poll indexer execution status
             var maxWaitTime = TimeSpan.FromSeconds(pollRequest.TimeoutSeconds);
             var pollInterval = TimeSpan.FromSeconds(pollRequest.PollIntervalSeconds);
             var startTime = DateTime.UtcNow;
 
-            _logger.LogInformation($"Starting to poll indexer status. Timeout: {maxWaitTime}, Poll interval: {pollInterval}");
+            _logger.LogInformation($"Starting to poll indexer execution status. Timeout: {maxWaitTime}, Poll interval: {pollInterval}");
 
-            IndexerStatus status;
             IndexerExecutionResult? lastExecution = null;
 
             do
@@ -83,30 +80,29 @@ public class PollIndexer
                     return timeoutResponse;
                 }
 
-                // Get indexer status
+                // Get indexer execution status
                 try
                 {
                     var indexerStatus = await indexerClient.GetIndexerStatusAsync(blobIndexerName);
-                    status = indexerStatus.Value.Status;
                     lastExecution = indexerStatus.Value.LastResult;
 
-                    _logger.LogInformation($"Indexer status: {status}, Last execution status: {lastExecution?.Status}");
+                    _logger.LogInformation($"Current execution status: {lastExecution.Status}");
 
-                    // Check if indexer is in error state
-                    if (status == IndexerStatus.Error)
+                    // Error status
+                    if (lastExecution.Status == IndexerExecutionStatus.TransientFailure)
                     {
-                        var errorMessage = lastExecution?.ErrorMessage ?? "Unknown error occurred";
-                        _logger.LogError($"Indexer is in error state: {errorMessage}");
+                        var errorMessage = lastExecution.ErrorMessage ?? "Unknown error occurred";
+                        _logger.LogError($"Indexer execution failed: {errorMessage}");
                         
                         var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
                         var errorResult = new PollIndexerResponse
                         {
-                            Status = "Error",
+                            Status = lastExecution.Status.ToString(),
                             Message = $"Indexer encountered an error: {errorMessage}",
                             IsComplete = true,
                             ElapsedTime = DateTime.UtcNow - startTime,
-                            ItemsProcessed = lastExecution?.ItemCount,
-                            ItemsFailed = lastExecution?.FailedItemCount
+                            ItemsProcessed = lastExecution.ItemCount,
+                            ItemsFailed = lastExecution.FailedItemCount
                         };
                         await errorResponse.WriteStringAsync(JsonSerializer.Serialize(errorResult, new JsonSerializerOptions
                         {
@@ -114,6 +110,54 @@ public class PollIndexer
                             WriteIndented = true
                         }));
                         return errorResponse;
+                    }
+                    else if (lastExecution.Status == IndexerExecutionStatus.Reset)
+                    {
+                        _logger.LogInformation("Indexer status is Reset. Returning reset status.");
+                        
+                        var resetResponse = req.CreateResponse(HttpStatusCode.OK);
+                        resetResponse.Headers.Add("Content-Type", "application/json");
+                        
+                        var resetResult = new PollIndexerResponse
+                        {
+                            Status = lastExecution.Status.ToString(),
+                            Message = "Indexer is in Reset state. It may not have started processing yet or has been reset.",
+                            IsComplete = true,
+                            ElapsedTime = DateTime.UtcNow - startTime,
+                            ItemsProcessed = lastExecution.ItemCount,
+                            ItemsFailed = lastExecution.FailedItemCount
+                        };
+
+                        await resetResponse.WriteStringAsync(JsonSerializer.Serialize(resetResult, new JsonSerializerOptions
+                        {
+                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                            WriteIndented = true
+                        }));
+                        return resetResponse;
+                    }
+                    else if (lastExecution.Status == IndexerExecutionStatus.Success)
+                    {
+                        _logger.LogInformation("Indexer execution completed successfully!");
+                        
+                        var successResponse = req.CreateResponse(HttpStatusCode.OK);
+                        successResponse.Headers.Add("Content-Type", "application/json");
+                        
+                        var successResult = new PollIndexerResponse
+                        {
+                            Status = lastExecution.Status.ToString(),
+                            Message = "Indexer execution completed successfully!",
+                            IsComplete = true,
+                            ElapsedTime = DateTime.UtcNow - startTime,
+                            ItemsProcessed = lastExecution.ItemCount,
+                            ItemsFailed = lastExecution.FailedItemCount
+                        };
+
+                        await successResponse.WriteStringAsync(JsonSerializer.Serialize(successResult, new JsonSerializerOptions
+                        {
+                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                            WriteIndented = true
+                        }));
+                        return successResponse;
                     }
                 }
                 catch (RequestFailedException ex)
@@ -124,38 +168,41 @@ public class PollIndexer
                     return errorResponse;
                 }
 
-                // If still running, wait before next poll
-                if (status == IndexerStatus.Running || 
-                    (lastExecution?.Status == IndexerExecutionStatus.InProgress))
+                // Only continue polling if execution is actually in progress
+                if (lastExecution?.Status == IndexerExecutionStatus.InProgress)
                 {
                     await Task.Delay(pollInterval);
                 }
+                else
+                {
+                    // If no execution is in progress, we're done
+                    break;
+                }
 
-            } while (status == IndexerStatus.Running || 
-                     (lastExecution?.Status == IndexerExecutionStatus.InProgress));
+            } while (lastExecution?.Status == IndexerExecutionStatus.InProgress);
 
-            // Indexer completed successfully
-            _logger.LogInformation("Indexer completed successfully!");
+            // If we exit the loop without a success or error, return current status (in progress)
+            _logger.LogInformation($"Polling loop exited with status: {lastExecution?.Status}");
             
-            var successResponse = req.CreateResponse(HttpStatusCode.OK);
-            successResponse.Headers.Add("Content-Type", "application/json");
+            var inProgressResponse = req.CreateResponse(HttpStatusCode.OK);
+            inProgressResponse.Headers.Add("Content-Type", "application/json");
             
-            var successResult = new PollIndexerResponse
+            var inProgressResult = new PollIndexerResponse
             {
                 Status = lastExecution?.Status.ToString() ?? "Unknown",
-                Message = "Indexer completed successfully!",
-                IsComplete = true,
+                Message = $"Indexer is in {lastExecution?.Status} state. Polling completed without final resolution.",
+                IsComplete = false,
                 ElapsedTime = DateTime.UtcNow - startTime,
                 ItemsProcessed = lastExecution?.ItemCount,
                 ItemsFailed = lastExecution?.FailedItemCount
             };
 
-            await successResponse.WriteStringAsync(JsonSerializer.Serialize(successResult, new JsonSerializerOptions
+            await inProgressResponse.WriteStringAsync(JsonSerializer.Serialize(inProgressResult, new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 WriteIndented = true
             }));
-            return successResponse;
+            return inProgressResponse;
         }
         catch (Exception ex)
         {
