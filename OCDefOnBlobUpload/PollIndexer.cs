@@ -94,13 +94,18 @@ public class PollIndexer
                         var errorMessage = lastExecution.ErrorMessage ?? "Unknown error occurred";
                         _logger.LogError($"Indexer execution failed: {errorMessage}");
                         
+                        // Calculate indexer execution duration
+                        var indexerExecutionTime = (lastExecution.StartTime.HasValue && lastExecution.EndTime.HasValue) 
+                            ? lastExecution.EndTime.Value - lastExecution.StartTime.Value 
+                            : DateTime.UtcNow - startTime;
+                        
                         var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
                         var errorResult = new PollIndexerResponse
                         {
                             Status = lastExecution.Status.ToString(),
                             Message = $"Indexer encountered an error: {errorMessage}",
                             IsComplete = true,
-                            ElapsedTime = DateTime.UtcNow - startTime,
+                            ElapsedTime = indexerExecutionTime,
                             ItemsProcessed = lastExecution.ItemCount,
                             ItemsFailed = lastExecution.FailedItemCount
                         };
@@ -115,6 +120,9 @@ public class PollIndexer
                     {
                         _logger.LogInformation("Indexer status is Reset. Returning reset status.");
                         
+                        // For Reset status, there might not be meaningful execution times
+                        var indexerExecutionTime = TimeSpan.Zero;
+                        
                         var resetResponse = req.CreateResponse(HttpStatusCode.OK);
                         resetResponse.Headers.Add("Content-Type", "application/json");
                         
@@ -123,7 +131,7 @@ public class PollIndexer
                             Status = lastExecution.Status.ToString(),
                             Message = "Indexer is in Reset state. It may not have started processing yet or has been reset.",
                             IsComplete = true,
-                            ElapsedTime = DateTime.UtcNow - startTime,
+                            ElapsedTime = indexerExecutionTime,
                             ItemsProcessed = lastExecution.ItemCount,
                             ItemsFailed = lastExecution.FailedItemCount
                         };
@@ -139,6 +147,11 @@ public class PollIndexer
                     {
                         _logger.LogInformation("Indexer execution completed successfully!");
                         
+                        // Calculate indexer execution duration
+                        var indexerExecutionTime = (lastExecution.StartTime.HasValue && lastExecution.EndTime.HasValue) 
+                            ? lastExecution.EndTime.Value - lastExecution.StartTime.Value 
+                            : DateTime.UtcNow - startTime;
+                        
                         var successResponse = req.CreateResponse(HttpStatusCode.OK);
                         successResponse.Headers.Add("Content-Type", "application/json");
                         
@@ -147,7 +160,7 @@ public class PollIndexer
                             Status = lastExecution.Status.ToString(),
                             Message = "Indexer execution completed successfully!",
                             IsComplete = true,
-                            ElapsedTime = DateTime.UtcNow - startTime,
+                            ElapsedTime = indexerExecutionTime,
                             ItemsProcessed = lastExecution.ItemCount,
                             ItemsFailed = lastExecution.FailedItemCount
                         };
