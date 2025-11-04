@@ -128,7 +128,7 @@ public class SubmitChat
         }
 
         // Search for user query with AI Search
-        _logger.LogInformation("Sending user query to AI Search...");
+        _logger.LogInformation("Connecting to Azure OpenAI...");
         var client = new AzureOpenAIClient(new Uri(openAiEndpoint), new AzureKeyCredential(openAiKey));
         var searchOptions = new SearchOptions
         {
@@ -136,6 +136,9 @@ public class SubmitChat
             Select = { "chunk" },
             Filter = $"CaseNumber eq '{chatRequest.CaseNumber}'"
         };
+
+
+        _logger.LogInformation("Connecting to Azure AI Search and sending query...");
         var searchClient = new SearchClient(new Uri(searchEndpoint), searchIndex, new AzureKeyCredential(searchKey));
         var searchResults = await searchClient.SearchAsync<SearchDocument>(chatRequest.Message, searchOptions);
         var relevantChunks = searchResults.Value.GetResults()
@@ -144,6 +147,7 @@ public class SubmitChat
             .ToList();
 
         // Search for previous chat history
+        _logger.LogInformation("Checking blob storage for existing chat history...");
         var historyUri = new Uri($"https://{accountName}.blob.core.windows.net/{chatHistoryContainer}");
         TokenCredential cred = managedIdentity != null ? new ManagedIdentityCredential(clientId: managedIdentity) : new VisualStudioCredential();
         BlobContainerClient container = new BlobContainerClient(historyUri, cred);
